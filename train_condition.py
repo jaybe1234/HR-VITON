@@ -23,22 +23,22 @@ def iou_metric(y_pred_batch, y_true_batch):
         y_true = y_true_batch[i]
         # y_pred is not one-hot, so need to threshold it
         y_pred = y_pred > 0.5
-        
+
         y_pred = y_pred.flatten()
         y_true = y_true.flatten()
 
-    
+
         intersection = torch.sum(y_pred[y_true == 1])
         union = torch.sum(y_pred) + torch.sum(y_true)
 
-    
+
         iou += (intersection + 1e-7) / (union - intersection + 1e-7) / B
     return iou
 
 def remove_overlap(seg_out, warped_cm):
-    
+
     assert len(warped_cm.shape) == 4
-    
+
     warped_cm = warped_cm - (torch.cat([seg_out[:, 1:3, :, :], seg_out[:, 5:, :, :]], dim=1)).sum(dim=1, keepdim=True) * warped_cm
     return warped_cm
 
@@ -69,11 +69,11 @@ def get_opt():
     parser.add_argument("--shuffle", action='store_true', help='shuffle input data')
     parser.add_argument("--semantic_nc", type=int, default=13)
     parser.add_argument("--output_nc", type=int, default=13)
-    
+
     # network
     parser.add_argument("--warp_feature", choices=['encoder', 'T1'], default="T1")
     parser.add_argument("--out_layer", choices=['relu', 'conv'], default="relu")
-    parser.add_argument('--Ddownx2', action='store_true', help="Downsample D's input to increase the receptive field")  
+    parser.add_argument('--Ddownx2', action='store_true', help="Downsample D's input to increase the receptive field")
     parser.add_argument('--Ddropout', action='store_true', help="Apply dropout to D")
     parser.add_argument('--num_D', type=int, default=2, help='Generator ngf')
     # Cuda availability
@@ -86,14 +86,14 @@ def get_opt():
     parser.add_argument("--clothmask_composition", type=str, choices=['no_composition', 'detach', 'warp_grad'], default='warp_grad')
     parser.add_argument('--edgeawaretv', type=str, choices=['no_edge', 'last_only', 'weighted'], default="no_edge", help="Edge aware TV loss")
     parser.add_argument('--add_lasttv', action='store_true')
-    
+
     # test visualize
-    parser.add_argument("--no_test_visualize", action='store_true')    
+    parser.add_argument("--no_test_visualize", action='store_true')
     parser.add_argument("--num_test_visualize", type=int, default=3)
     parser.add_argument("--test_datasetting", default="unpaired")
     parser.add_argument("--test_dataroot", default="./data/")
     parser.add_argument("--test_data_list", default="test_pairs.txt")
-    
+
 
     # Hyper-parameters
     parser.add_argument('--G_lr', type=float, default=0.0002, help='Generator initial learning rate for adam')
@@ -105,7 +105,7 @@ def get_opt():
     parser.add_argument('--val_count', type=int, default='1000')
     parser.add_argument('--spectral', action='store_true', help="Apply spectral normalization to D")
     parser.add_argument('--occlusion', action='store_true', help="Occlusion handling")
-    
+
     opt = parser.parse_args()
     return opt
 
@@ -128,7 +128,7 @@ def train(opt, train_loader, test_loader, val_loader, board, tocg, D):
     # optimizer
     optimizer_G = torch.optim.Adam(tocg.parameters(), lr=opt.G_lr, betas=(0.5, 0.999))
     optimizer_D = torch.optim.Adam(D.parameters(), lr=opt.D_lr, betas=(0.5, 0.999))
-    
+
 
     for step in tqdm(range(opt.load_step, opt.keep_step)):
         iter_start_time = time.time()
@@ -166,7 +166,7 @@ def train(opt, train_loader, test_loader, val_loader, board, tocg, D):
                 cloth_mask = torch.ones_like(fake_segmap.detach())
                 cloth_mask[:, 3:4, :, :] = warped_cm_onehot
                 fake_segmap = fake_segmap * cloth_mask
-                
+
             if opt.clothmask_composition == 'warp_grad':
                 cloth_mask = torch.ones_like(fake_segmap.detach())
                 cloth_mask[:, 3:4, :, :] = warped_clothmask_paired
@@ -174,18 +174,18 @@ def train(opt, train_loader, test_loader, val_loader, board, tocg, D):
         if opt.occlusion:
             warped_clothmask_paired = remove_overlap(F.softmax(fake_segmap, dim=1), warped_clothmask_paired)
             warped_cloth_paired = warped_cloth_paired * warped_clothmask_paired + torch.ones_like(warped_cloth_paired) * (1-warped_clothmask_paired)
-        
+
         # generated fake cloth mask & misalign mask
         fake_clothmask = (torch.argmax(fake_segmap.detach(), dim=1, keepdim=True) == 3).long()
         misalign = fake_clothmask - warped_cm_onehot
         misalign[misalign < 0.0] = 0.0
-        
+
         # loss warping
         loss_l1_cloth = criterionL1(warped_clothmask_paired, parse_cloth_mask)
         loss_vgg = criterionVGG(warped_cloth_paired, im_c)
 
         loss_tv = 0
-        
+
         if opt.edgeawaretv == 'no_edge':
             if not opt.lasttvonly:
                 for flow in flow_list:
@@ -210,7 +210,7 @@ def train(opt, train_loader, test_loader, val_loader, board, tocg, D):
                 y_tv = y_tv.mean()
                 x_tv = x_tv.mean()
                 loss_tv = loss_tv + y_tv + x_tv
-                
+
             elif opt.edgeawaretv == 'weighted':
                 for i in range(5):
                     flow = flow_list[i]
@@ -224,13 +224,13 @@ def train(opt, train_loader, test_loader, val_loader, board, tocg, D):
                     y_tv = y_tv.mean() / (2 ** (4-i))
                     x_tv = x_tv.mean() / (2 ** (4-i))
                     loss_tv = loss_tv + y_tv + x_tv
-            
+
             if opt.add_lasttv:
                 for flow in flow_list[-1:]:
                     y_tv = torch.abs(flow[:, 1:, :, :] - flow[:, :-1, :, :]).mean()
                     x_tv = torch.abs(flow[:, :, 1:, :] - flow[:, :, :-1, :]).mean()
                     loss_tv = loss_tv + y_tv + x_tv
-            
+
 
         N, _, iH, iW = c_paired.size()
         # Intermediate flow loss
@@ -246,26 +246,26 @@ def train(opt, train_loader, test_loader, val_loader, board, tocg, D):
                 warped_cm = remove_overlap(F.softmax(fake_segmap, dim=1), warped_cm)
                 loss_l1_cloth += criterionL1(warped_cm, parse_cloth_mask) / (2 ** (4-i))
                 loss_vgg += criterionVGG(warped_c, im_c) / (2 ** (4-i))
-            
+
         # loss segmentation
         # generator
         CE_loss = cross_entropy2d(fake_segmap, label_onehot.transpose(0, 1)[0].long())
-        
+
         if opt.no_GAN_loss:
             loss_G = (10 * loss_l1_cloth + loss_vgg + opt.tvlambda * loss_tv) + (CE_loss * opt.CElamda)
             # step
             optimizer_G.zero_grad()
             loss_G.backward()
             optimizer_G.step()
-        
+
         else:
             fake_segmap_softmax = torch.softmax(fake_segmap, 1)
 
             pred_segmap = D(torch.cat((input1.detach(), input2.detach(), fake_segmap_softmax), dim=1))
-            
+
             loss_G_GAN = criterionGAN(pred_segmap, True)
-            
-            if not opt.G_D_seperate:  
+
+            if not opt.G_D_seperate:
                 # discriminator
                 fake_segmap_pred = D(torch.cat((input1.detach(), input2.detach(), fake_segmap_softmax.detach()),dim=1))
                 real_segmap_pred = D(torch.cat((input1.detach(), input2.detach(), label),dim=1))
@@ -280,33 +280,33 @@ def train(opt, train_loader, test_loader, val_loader, board, tocg, D):
                 optimizer_G.zero_grad()
                 loss_G.backward()
                 optimizer_G.step()
-                
+
                 optimizer_D.zero_grad()
                 loss_D.backward()
                 optimizer_D.step()
-                
+
             else: # train G first after that train D
                 # loss G sum
                 loss_G = (10 * loss_l1_cloth + loss_vgg + opt.tvlambda * loss_tv) + (CE_loss * opt.CElamda + loss_G_GAN * opt.GANlambda)  # warping + seg_generation
-                
+
                 # step G
                 optimizer_G.zero_grad()
                 loss_G.backward()
                 optimizer_G.step()
-                
+
                 # discriminator
                 with torch.no_grad():
                     _, fake_segmap, _, _ = tocg(opt, input1, input2)
                 fake_segmap_softmax = torch.softmax(fake_segmap, 1)
-                
+
                 # loss discriminator
                 fake_segmap_pred = D(torch.cat((input1.detach(), input2.detach(), fake_segmap_softmax.detach()),dim=1))
                 real_segmap_pred = D(torch.cat((input1.detach(), input2.detach(), label),dim=1))
                 loss_D_fake = criterionGAN(fake_segmap_pred, False)
                 loss_D_real = criterionGAN(real_segmap_pred, True)
-                
+
                 loss_D = loss_D_fake + loss_D_real
-                
+
                 optimizer_D.zero_grad()
                 loss_D.backward()
                 optimizer_D.step()
@@ -316,7 +316,7 @@ def train(opt, train_loader, test_loader, val_loader, board, tocg, D):
             iou_list = []
             with torch.no_grad():
                 for cnt in range(2000//opt.batch_size):
-                
+
                     inputs = val_loader.next_batch()
                     # input1
                     c_paired = inputs['cloth']['paired'].cuda()
@@ -333,10 +333,10 @@ def train(opt, train_loader, test_loader, val_loader, board, tocg, D):
                     im_c = inputs['parse_cloth'].cuda()  # VGG
                     # visualization
                     im = inputs['image']
-                    
+
                     input1 = torch.cat([c_paired, cm_paired], 1)
                     input2 = torch.cat([parse_agnostic, densepose], 1)
-                    
+
                     # forward
                     flow_list, fake_segmap, warped_cloth_paired, warped_clothmask_paired = tocg(opt, input1, input2)
 
@@ -346,19 +346,19 @@ def train(opt, train_loader, test_loader, val_loader, board, tocg, D):
                             cloth_mask = torch.ones_like(fake_segmap.detach())
                             cloth_mask[:, 3:4, :, :] = warped_cm_onehot
                             fake_segmap = fake_segmap * cloth_mask
-                            
+
                         if opt.clothmask_composition == 'warp_grad':
                             cloth_mask = torch.ones_like(fake_segmap.detach())
                             cloth_mask[:, 3:4, :, :] = warped_clothmask_paired
                             fake_segmap = fake_segmap * cloth_mask
-    
+
                     # calculate iou
                     iou = iou_metric(F.softmax(fake_segmap, dim=1).detach(), label)
                     iou_list.append(iou.item())
 
             tocg.train()
             board.add_scalar('val/iou', np.mean(iou_list), step + 1)
-        
+
         # tensorboard
         if (step + 1) % opt.tensorboard_count == 0:
             # loss G
@@ -373,13 +373,13 @@ def train(opt, train_loader, test_loader, val_loader, board, tocg, D):
                 board.add_scalar('Loss/D', loss_D.item(), step + 1)
                 board.add_scalar('Loss/D/pred_real', loss_D_real.item(), step + 1)
                 board.add_scalar('Loss/D/pred_fake', loss_D_fake.item(), step + 1)
-            
+
             grid = make_grid([(c_paired[0].cpu() / 2 + 0.5), (cm_paired[0].cpu()).expand(3, -1, -1), visualize_segmap(parse_agnostic.cpu()), ((densepose.cpu()[0]+1)/2),
                               (im_c[0].cpu() / 2 + 0.5), parse_cloth_mask[0].cpu().expand(3, -1, -1), (warped_cloth_paired[0].cpu().detach() / 2 + 0.5), (warped_cm_onehot[0].cpu().detach()).expand(3, -1, -1),
                               visualize_segmap(label.cpu()), visualize_segmap(fake_segmap.cpu()), (im[0]/2 +0.5), (misalign[0].cpu().detach()).expand(3, -1, -1)],
                                 nrow=4)
             board.add_images('train_images', grid.unsqueeze(0), step + 1)
-            
+
             if not opt.no_test_visualize:
                 inputs = test_loader.next_batch()
                 # input1
@@ -413,7 +413,7 @@ def train(opt, train_loader, test_loader, val_loader, board, tocg, D):
                             cloth_mask = torch.ones_like(fake_segmap)
                             cloth_mask[:,3:4, :, :] = warped_cm_onehot
                             fake_segmap = fake_segmap * cloth_mask
-                            
+
                         if opt.clothmask_composition == 'warp_grad':
                             cloth_mask = torch.ones_like(fake_segmap)
                             cloth_mask[:,3:4, :, :] = warped_clothmask_paired
@@ -421,12 +421,12 @@ def train(opt, train_loader, test_loader, val_loader, board, tocg, D):
                     if opt.occlusion:
                         warped_clothmask_paired = remove_overlap(F.softmax(fake_segmap, dim=1), warped_clothmask_paired)
                         warped_cloth_paired = warped_cloth_paired * warped_clothmask_paired + torch.ones_like(warped_cloth_paired) * (1-warped_clothmask_paired)
-                    
+
                     # generated fake cloth mask & misalign mask
                     fake_clothmask = (torch.argmax(fake_segmap.detach(), dim=1, keepdim=True) == 3).long()
                     misalign = fake_clothmask - warped_cm_onehot
                     misalign[misalign < 0.0] = 0.0
-                
+
                 for i in range(opt.num_test_visualize):
                     grid = make_grid([(c_paired[i].cpu() / 2 + 0.5), (cm_paired[i].cpu()).expand(3, -1, -1), visualize_segmap(parse_agnostic.cpu(), batch=i), ((densepose.cpu()[i]+1)/2),
                                     (im_c[i].cpu() / 2 + 0.5), parse_cloth_mask[i].cpu().expand(3, -1, -1), (warped_cloth_paired[i].cpu().detach() / 2 + 0.5), (warped_cm_onehot[i].cpu().detach()).expand(3, -1, -1),
@@ -434,7 +434,7 @@ def train(opt, train_loader, test_loader, val_loader, board, tocg, D):
                                         nrow=4)
                     board.add_images(f'test_images/{i}', grid.unsqueeze(0), step + 1)
                 tocg.train()
-        
+
         # display
         if (step + 1) % opt.display_count == 0:
             t = time.time() - iter_start_time
@@ -452,11 +452,11 @@ def main():
     print(opt)
     print("Start to train %s!" % opt.name)
     os.environ["CUDA_VISIBLE_DEVICES"] = opt.gpu_ids
-    
+
     # create train dataset & loader
     train_dataset = CPDataset(opt)
     train_loader = CPDataLoader(opt, train_dataset)
-    
+
     # create test dataset & loader
     test_loader = None
     if not opt.no_test_visualize:
@@ -480,7 +480,7 @@ def main():
     input2_nc = opt.semantic_nc + 3  # parse_agnostic + densepose
     tocg = ConditionGenerator(opt, input1_nc=4, input2_nc=input2_nc, output_nc=opt.output_nc, ngf=96, norm_layer=nn.BatchNorm2d)
     D = define_D(input_nc=input1_nc + input2_nc + opt.output_nc, Ddownx2 = opt.Ddownx2, Ddropout = opt.Ddropout, n_layers_D=3, spectral = opt.spectral, num_D = opt.num_D)
-    
+
     # Load Checkpoint
     if not opt.tocg_checkpoint == '' and os.path.exists(opt.tocg_checkpoint):
         load_checkpoint(tocg, opt.tocg_checkpoint)

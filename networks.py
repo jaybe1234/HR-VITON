@@ -15,7 +15,7 @@ class ConditionGenerator(nn.Module):
         super(ConditionGenerator, self).__init__()
         self.warp_feature = opt.warp_feature
         self.out_layer_opt = opt.out_layer
-        
+
         self.ClothEncoder = nn.Sequential(
             ResBlock(input1_nc, ngf, norm_layer=norm_layer, scale='down'),  # 128
             ResBlock(ngf, ngf * 2, norm_layer=norm_layer, scale='down'),  # 64
@@ -23,7 +23,7 @@ class ConditionGenerator(nn.Module):
             ResBlock(ngf * 4, ngf * 4, norm_layer=norm_layer, scale='down'),  # 16
             ResBlock(ngf * 4, ngf * 4, norm_layer=norm_layer, scale='down')  # 8
         )
-        
+
         self.PoseEncoder = nn.Sequential(
             ResBlock(input2_nc, ngf, norm_layer=norm_layer, scale='down'),
             ResBlock(ngf, ngf * 2, norm_layer=norm_layer, scale='down'),
@@ -31,9 +31,9 @@ class ConditionGenerator(nn.Module):
             ResBlock(ngf * 4, ngf * 4, norm_layer=norm_layer, scale='down'),
             ResBlock(ngf * 4, ngf * 4, norm_layer=norm_layer, scale='down')
         )
-        
+
         self.conv = ResBlock(ngf * 4, ngf * 8, norm_layer=norm_layer, scale='same')
-        
+
         if opt.warp_feature == 'T1':
             # in_nc -> skip connection + T1, T2 channel
             self.SegDecoder = nn.Sequential(
@@ -59,7 +59,7 @@ class ConditionGenerator(nn.Module):
                 ResBlock(ngf + input1_nc + input2_nc, ngf, norm_layer=norm_layer, scale='same'),
                 nn.Conv2d(ngf, output_nc, kernel_size=1, bias=True)
             )
-        
+
         # Cloth Conv 1x1
         self.conv1 = nn.Sequential(
             nn.Conv2d(ngf, ngf * 4, kernel_size=1, bias=True),
@@ -75,7 +75,7 @@ class ConditionGenerator(nn.Module):
             nn.Conv2d(ngf * 4, ngf * 4, kernel_size=1, bias=True),
             nn.Conv2d(ngf * 4, ngf * 4, kernel_size=1, bias=True),
         )
-        
+
         self.flow_conv = nn.ModuleList([
             nn.Conv2d(ngf * 8, 2, kernel_size=3, stride=1, padding=1, bias=True),
             nn.Conv2d(ngf * 8, 2, kernel_size=3, stride=1, padding=1, bias=True),
@@ -84,17 +84,17 @@ class ConditionGenerator(nn.Module):
             nn.Conv2d(ngf * 8, 2, kernel_size=3, stride=1, padding=1, bias=True),
         ]
         )
-        
+
         self.bottleneck = nn.Sequential(
             nn.Sequential(nn.Conv2d(ngf * 4, ngf * 4, kernel_size=3, stride=1, padding=1, bias=True), nn.ReLU()),
             nn.Sequential(nn.Conv2d(ngf * 4, ngf * 4, kernel_size=3, stride=1, padding=1, bias=True), nn.ReLU()),
             nn.Sequential(nn.Conv2d(ngf * 2, ngf * 4, kernel_size=3, stride=1, padding=1, bias=True) , nn.ReLU()),
             nn.Sequential(nn.Conv2d(ngf, ngf * 4, kernel_size=3, stride=1, padding=1, bias=True), nn.ReLU()),
         )
-        
+
     def normalize(self, x):
         return x
-    
+
     def forward(self,opt,input1, input2, upsample='bilinear'):
         E1_list = []
         E2_list = []
@@ -119,21 +119,21 @@ class ConditionGenerator(nn.Module):
                 T1 = E1_list[4 - i]  # (ngf * 4) x 8 x 6
                 T2 = E2_list[4 - i]
                 E4 = torch.cat([T1, T2], 1)
-                
+
                 flow = self.flow_conv[i](self.normalize(E4)).permute(0, 2, 3, 1)
                 flow_list.append(flow)
-                
+
                 x = self.conv(T2)
                 x = self.SegDecoder[i](x)
-                
+
             else:
                 T1 = F.interpolate(T1, scale_factor=2, mode=upsample) + self.conv1[4 - i](E1_list[4 - i])
-                T2 = F.interpolate(T2, scale_factor=2, mode=upsample) + self.conv2[4 - i](E2_list[4 - i]) 
-                
+                T2 = F.interpolate(T2, scale_factor=2, mode=upsample) + self.conv2[4 - i](E2_list[4 - i])
+
                 flow = F.interpolate(flow_list[i - 1].permute(0, 3, 1, 2), scale_factor=2, mode=upsample).permute(0, 2, 3, 1)  # upsample n-1 flow
                 flow_norm = torch.cat([flow[:, :, :, 0:1] / ((iW/2 - 1.0) / 2.0), flow[:, :, :, 1:2] / ((iH/2 - 1.0) / 2.0)], 3)
                 warped_T1 = F.grid_sample(T1, flow_norm + grid, padding_mode='border')
-                
+
                 flow = flow + self.flow_conv[i](self.normalize(torch.cat([warped_T1, self.bottleneck[i-1](x)], 1))).permute(0, 2, 3, 1)  # F(n)
                 flow_list.append(flow)
 
@@ -142,15 +142,15 @@ class ConditionGenerator(nn.Module):
                 if self.warp_feature == 'encoder':
                     warped_E1 = F.grid_sample(E1_list[4-i], flow_norm + grid, padding_mode='border')
                     x = self.SegDecoder[i](torch.cat([x, E2_list[4-i], warped_E1], 1))
-        
- 
+
+
         N, _, iH, iW = input1.size()
         grid = make_grid(N, iH, iW,opt)
-        
+
         flow = F.interpolate(flow_list[-1].permute(0, 3, 1, 2), scale_factor=2, mode=upsample).permute(0, 2, 3, 1)
         flow_norm = torch.cat([flow[:, :, :, 0:1] / ((iW/2 - 1.0) / 2.0), flow[:, :, :, 1:2] / ((iH/2 - 1.0) / 2.0)], 3)
         warped_input1 = F.grid_sample(input1, flow_norm + grid, padding_mode='border')
-        
+
         x = self.out_layer(torch.cat([x, input2, warped_input1], 1))
 
         warped_c = warped_input1[:, :-1, :, :]
@@ -183,7 +183,7 @@ class ResBlock(nn.Module):
             )
         if scale == 'down':
             self.scale = nn.Conv2d(in_nc, out_nc, kernel_size=3, stride=2, padding=1, bias=use_bias)
-            
+
         self.block = nn.Sequential(
             nn.Conv2d(out_nc, out_nc, kernel_size=3, stride=1, padding=1, bias=use_bias),
             norm_layer(out_nc),
@@ -229,7 +229,7 @@ class Vgg19(nn.Module):
         h_relu5 = self.slice5(h_relu4)
         out = [h_relu1, h_relu2, h_relu3, h_relu4, h_relu5]
         return out
-    
+
 
 class VGGLoss(nn.Module):
     def __init__(self, opt,layids = None):
@@ -330,14 +330,14 @@ class MultiscaleDiscriminator(nn.Module):
 
     def forward(self, input):
         num_D = self.num_D
-        
+
         result = []
         if self.Ddownx2:
             input_downsampled = self.downsample(input)
         else:
             input_downsampled = input
         for i in range(num_D):
-            
+
             if self.getIntermFeat:
                 model = [getattr(self, 'scale' + str(num_D - 1 - i) + '_layer' + str(j)) for j in
                          range(self.n_layers + 2)]
@@ -374,7 +374,7 @@ class NLayerDiscriminator(nn.Module):
                     self.spectral_norm(nn.Conv2d(nf_prev, nf, kernel_size=kw, stride=2, padding=padw)),
                     norm_layer(nf), nn.LeakyReLU(0.2, True)
                 ]]
-                
+
         nf_prev = nf
         nf = min(nf * 2, 512)
         sequence += [[
