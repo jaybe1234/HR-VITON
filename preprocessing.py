@@ -4,15 +4,13 @@ import PIL
 import cv2
 import numpy as np
 import torch
-from PIL.Image import Resampling
-from PIL.ImagePalette import ImagePalette
-from torch import nn
 from PIL import Image, ImageDraw
-from torchvision.transforms import transforms as T
+from PIL.Image import Resampling
+from torch import nn
+from torchvision.transforms import transforms as T, InterpolationMode
 
 from human_parsing_lip.net.pspnet import PSPNet
 from pytorch_openpose.src.body import Body
-
 
 
 def build_human_parsing_model():
@@ -32,7 +30,6 @@ def build_densepose_model():
     from densepose.vis.extractor import create_extractor
 
     from detectron2.config import get_cfg
-    from detectron2.data.detection_utils import read_image
     from detectron2.engine import DefaultPredictor
 
     config_fpath = 'densepose-configs/densepose_rcnn_R_50_FPN_s1x.yaml'
@@ -211,35 +208,67 @@ def get_dataset(img_path: str, cloth_path: str, mask_path: str):
     key = generate_openpose(img)
     human_parse = generate_human_parsing(img, img.size)
     densepose = generate_densepose(img)
-    cloth_agnostic = get_im_parse_agnostic(human_parse, key, *img.size)
+    cloth_agnostic = get_im_parse_agnostic(human_parse, key)
     agnostic = get_agnostic(img, human_parse, key)
-    cloth, cloth_mask = get_uppers(cloth_agnostic, cloth_path)
+    cloth, cloth_mask = get_uppers(cloth_path, mask_path)
 
     # Convert to tensor
     transform = T.Compose([ \
         T.ToTensor(), \
         T.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
 
+    labels = {
+        0:  ['background',  [0, 10]],
+        1:  ['hair',        [1, 2]],
+        2:  ['face',        [4, 13]],
+        3:  ['upper',       [5, 6, 7]],
+        4:  ['bottom',      [9, 12]],
+        5:  ['left_arm',    [14]],
+        6:  ['right_arm',   [15]],
+        7:  ['left_leg',    [16]],
+        8:  ['right_leg',   [17]],
+        9:  ['left_shoe',   [18]],
+        10: ['right_shoe',  [19]],
+        11: ['socks',       [8]],
+        12: ['noise',       [3, 11]]
+    }
+
     ## densepose
-    densepose = T.Resize(196)(densepose)
+    densepose = T.Resize(192)(densepose)
     densepose = transform(densepose)
 
     ## cloth
-    cloth = T.Resize(196)(cloth)
+    cloth = T.Resize(192)(cloth)
     cloth = transform(cloth)
 
     ## cloth mask
-    cloth_mask = T.Resize(196, )(cloth_mask)
-    cloth_mask = transform(cloth_mask)
+    cloth_mask = T.Resize(192, InterpolationMode.NEAREST)(cloth_mask)
+    cloth_mask = (np.array(cloth_mask) >= 128).astype(np.float32)
+    cloth_mask = torch.from_numpy(cloth_mask).unsqueeze(0)
+
+    ## cloth agnostic
+    cloth_agnostic = T.Resize(192)(cloth_agnostic)
+    cloth_agnostic = torch.from_numpy(np.array(cloth_agnostic)).long().unsqueeze_(0)
+    parse_map = torch.zeros((20, 256, 192), dtype=torch.float32)
+    parse_map = parse_map.scatter_(0, cloth_agnostic, 1.0)
+
+    cloth_agnostic_oh = torch.zeros((13, 256, 192))
+    for i in range(len(labels)):
+        for label in labels[i][1]:
+            cloth_agnostic_oh[i] += parse_map[label]
+
+    ## human agnostic
+    human_agnostic = get_agnostic(img, human_parse, key)
+    human_agnostic = T.Resize(192)(human_agnostic)
+    human_agnostic = transform(human_agnostic)
 
     return {
         "cloth": cloth,
         "cloth_mask": cloth_mask,
-        "agnostic": None,
-        "human_parse_agnostic": None,
+        "human_agnostic": human_agnostic,
         "densepose": densepose,
+        "cloth_agnostic": cloth_agnostic_oh,
     }
-
 
 
 if __name__ == '__main__':
