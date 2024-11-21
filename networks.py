@@ -110,6 +110,8 @@ class ConditionGenerator(nn.Module):
                 E1_list.append(self.ClothEncoder[i](E1_list[i - 1]))
                 E2_list.append(self.PoseEncoder[i](E2_list[i - 1]))
 
+        # T1 = cloth
+        # T2 = pose
         # Compute Clothflow
         for i in range(5):
             N, _, iH, iW = E1_list[4 - i].size()
