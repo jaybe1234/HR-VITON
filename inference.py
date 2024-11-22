@@ -5,6 +5,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import torchgeometry as tgm
+from torchvision.utils import save_image
 
 import numpy as np
 
@@ -134,10 +135,13 @@ def inference(dataset):
 
 if __name__ == '__main__':
     # generator.print_network()
-    img_path = "./data/train/image/00000_00.jpg"
-    cloth_path = "./data/train/cloth/00001_00.jpg"
-    cloth_mask_path = "./data/train/cloth-mask/00001_00.jpg"
+    img_path = "./data/test/image/05006_00.jpg"
+    cloth_path = "./data/test/cloth/11001_00.jpg"
+    cloth_mask_path = "./data/test/cloth-mask/11001_00.jpg"
 
     dataset = get_dataset(img_path, cloth_path, cloth_mask_path)
     output = inference(dataset)
+    img = output[0].cpu()/2 + 0.5
+    save_image(img, 'output_test.png')
+
     print("done")
