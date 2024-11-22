@@ -46,9 +46,6 @@ def build_densepose_model():
 
     return predictor, visualizer, extractor
 
-human_parsing_model = build_human_parsing_model()
-openpose_model = build_openpose_model()
-predictor, visualizer, extractor = build_densepose_model()
 
 def denormalize(img: np.ndarray, mean: List[float], std: List[float]):
     c, _, _ = img.shape
@@ -58,6 +55,7 @@ def denormalize(img: np.ndarray, mean: List[float], std: List[float]):
 
 
 def generate_human_parsing(image: PIL.Image, size=(192, 256)):
+    human_parsing_model = build_human_parsing_model()
     transforms = T.Compose([
         T.Resize((256, 256), 3),
         T.ToTensor(),
@@ -76,6 +74,7 @@ def generate_human_parsing(image: PIL.Image, size=(192, 256)):
 
 
 def generate_openpose(image: PIL.Image):
+    openpose_model = build_openpose_model()
     image = np.array(image)
     image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
     candidate, subset = openpose_model(image)
@@ -116,6 +115,7 @@ def get_im_parse_agnostic(im_parse, pose_data, w=768, h=1024) -> Image:
     return agnostic
 
 def generate_densepose(img: PIL.Image):
+    predictor, visualizer, extractor = build_densepose_model()
     img = np.array(img)
     img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
     with torch.no_grad():
@@ -234,32 +234,27 @@ def get_dataset(img_path: str, cloth_path: str, mask_path: str):
     }
 
     ## densepose
-    densepose = T.Resize(192)(densepose)
     densepose = transform(densepose)
 
     ## cloth
-    cloth = T.Resize(192)(cloth)
     cloth = transform(cloth)
 
     ## cloth mask
-    cloth_mask = T.Resize(192, InterpolationMode.NEAREST)(cloth_mask)
     cloth_mask = (np.array(cloth_mask) >= 128).astype(np.float32)
     cloth_mask = torch.from_numpy(cloth_mask).unsqueeze(0)
 
     ## cloth agnostic
-    cloth_agnostic = T.Resize(192)(cloth_agnostic)
     cloth_agnostic = torch.from_numpy(np.array(cloth_agnostic)).long().unsqueeze_(0)
-    parse_map = torch.zeros((20, 256, 192), dtype=torch.float32)
+    parse_map = torch.zeros((20, 1024, 768), dtype=torch.float32)
     parse_map = parse_map.scatter_(0, cloth_agnostic, 1.0)
 
-    cloth_agnostic_oh = torch.zeros((13, 256, 192))
+    cloth_agnostic_oh = torch.zeros((13, 1024, 768))
     for i in range(len(labels)):
         for label in labels[i][1]:
             cloth_agnostic_oh[i] += parse_map[label]
 
     ## human agnostic
     human_agnostic = get_agnostic(img, human_parse, key)
-    human_agnostic = T.Resize(192)(human_agnostic)
     human_agnostic = transform(human_agnostic)
 
     return {
