@@ -139,7 +139,25 @@ if __name__ == '__main__':
     cloth_path = "./data/test/cloth/11001_00.jpg"
     cloth_mask_path = "./data/test/cloth-mask/11001_00.jpg"
 
-    dataset = get_dataset(img_path, cloth_path, cloth_mask_path)
+    cp_dataset = CPDatasetTest(opt)
+    cp_datapoint = cp_dataset[0]
+    
+    cloth = cp_datapoint["cloth"]
+    cloth_mask = cp_datapoint["cloth_mask"]
+    cloth_agnostic = cp_datapoint["parse_agnostic"]
+    densepose = cp_datapoint["densepose"]
+    human_agnostic = cp_datapoint["agnostic"]
+    
+    dataset = {
+        "cloth": cloth,
+        "cloth_mask": cloth_mask,
+        "human_agnostic": human_agnostic,
+        "densepose": densepose,
+        "cloth_agnostic": cloth_agnostic
+    }
+
+
+    # dataset = get_dataset(img_path, cloth_path, cloth_mask_path)
     output = inference(dataset)
     img = output[0].cpu()/2 + 0.5
     save_image(img, 'output_test.png')
