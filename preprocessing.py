@@ -205,6 +205,7 @@ def get_uppers(cloth_path: str, cloth_mask_path: str):
 def get_dataset(img_path: str, cloth_path: str, mask_path: str):
 
     img = Image.open(img_path)
+    img = img.resize((768, 1024), resample=Resampling.BILINEAR)
     key = generate_openpose(img)
     human_parse = generate_human_parsing(img, img.size)
     densepose = generate_densepose(img)
